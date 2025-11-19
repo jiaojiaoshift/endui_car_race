@@ -105,7 +105,7 @@ typedef struct {
 
 typedef enum
 {
-		TASK_RUNNING,
+	  TASK_RUNNING,
 	  TASK_DONE,
 	  TASK_STOP,  //给出标志位的枚举类型
 	  TASK_READY
