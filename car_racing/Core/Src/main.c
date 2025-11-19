@@ -103,7 +103,14 @@ typedef struct {
     float integral_limit;
 } PID_Controller;
 
+typedef enum
+{
+		TASK_RUNNING,
+	  TASK_DONE,
+	  TASK_STOP,  //给出标志位的枚举类型
+	  TASK_READY
 
+}taskstate;
 
 // 全局变量
 /*const float Kp_angle=0;
@@ -124,18 +131,24 @@ volatile float target_Angularvelocity=0;
 volatile float measured_Angularvelocity=0;
 const float integralLimit0 = 100.0f;  // 角速度环积分限幅
 
-volatile float target_translation_vio=90;//目标平动速度
+volatile float target_translation_vio=90;//目标平动速度，给90貌似不太对？如果我们pwm占空比限幅是3600的话，这玩意乘以kp一下子就干满了？
 volatile float target_leftwheelvio=0;
 volatile float rotatevio_adding=0;
 volatile float target_rightwheelvio=0;
 volatile float measured_leftwheelvio=0;
 volatile float measured_rightwheelvio=0;
+volatile float circle_angle=0;
 const float integralLimit1 = 100.0f;  // 速度环积分限幅
 
 float leftoutput;
 float leftpwm;
 float rightoutput;
 float rightpwm;
+
+taskstate Circle_CalculateAngle_Flag=TASK_STOP;//是否开始计算角度
+taskstate Circle_OUT_Flag=TASK_STOP;//是否转完了360度刚出环岛
+taskstate Is_Straight_Flag=TASK_STOP;//车身方向是否大致是直的
+taskstate Circle_Destination_Flag=TASK_STOP;//车是否到达不被环岛干扰的最远点
 
 //三个结构体定义
 PID_Controller angle_pid_pd = {.Kp=425, 0, .Kd=1, 0, 0, 0, 0};  // 角度环只有PD
@@ -145,11 +158,18 @@ PID_Controller velocity_pid_pi_right = {.Kp=66, .Ki=5, 0, 0, 0, 0, integralLimit
 
 //前三个为PID参数，接下来三个是目前误差，前一次误差，以及积分加和误差，最后一个参数是积分限幅
 
-/*void Calculate_measured_angle()
+void Calculate_measured_angle()
 {
-    // 实现测量角度计算
-}*/
-//这里不需要
+	if(circle_angle<350)//具体给345-360的哪个值到时候看效果
+	{circle_angle+=gyro_z*0.005;}
+	else{
+	 Circle_OUT_Flag=TASK_DONE;
+	 Circle_CalculateAngle_Flag=TASK_STOP;
+	 circle_angle=0;
+	}
+    // 实现测量环岛转向角度计算，误差极小
+	}
+
 
 // PID计算函数
 float PID_Calculate(PID_Controller* pid, float target, float measured)
@@ -179,9 +199,16 @@ float PID_Calculate(PID_Controller* pid, float target, float measured)
 
 void PIDcontrollor() // 第一种方案PID
 {  
-    // 转向环
-   target_Angularvelocity = PID_Calculate(&angle_pid_pd, target_angle, measured_angle);
-    
+	// 转向环，加入环岛判断与控制，按这样的逻辑转的不够不会出问题，但是转过头就会亖了（直行标志位的意义在于转角度少了能及时把控制权交给光电管PID）
+	  if(Is_Straight_Flag==TASK_RUNNING && Circle_Destination_Flag != TASK_DONE )
+    {
+			target_Angularvelocity = 0;//防止再次进入环岛
+		} 
+    else
+		{
+			target_Angularvelocity = PID_Calculate(&angle_pid_pd, target_angle, measured_angle);
+			Circle_Destination_Flag=TASK_STOP;//清空标志位
+		}			
     // 角速度环
 		if (gyro_z>2||gyro_z<-2)
 		{measured_Angularvelocity=gyro_z;}
@@ -198,38 +225,7 @@ void PIDcontrollor() // 第一种方案PID
     rightoutput = PID_Calculate(&velocity_pid_pi_right, target_rightwheelvio, measured_rightwheelvio);
     leftoutput = PID_Calculate(&velocity_pid_pi_left, target_leftwheelvio, measured_leftwheelvio);
 
-/*	 leftpwm= leftoutput;
-	 rightpwm=rightoutput;
-	
-   if (leftpwm > 3600) {
-     leftpwm = 3600;                 //限速
-   }
-	 else if (leftpwm <-3600) {
-     leftpwm =-3600;
-   }
-	
-	 
-   if (rightpwm > 3600) {
-     rightpwm = 3600;
-   }
-   else if (rightpwm <-3600) {
-     rightpwm =-3600;
-   }
- 
-	 
-	 if ( leftpwm >= 0) {
-   TIM1->CCR1 =  leftpwm, HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
- } else {
-   TIM1->CCR1 = -leftpwm, HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); // 操作ccr改pwm
- }
- 
- 
-  if ( rightpwm >= 0) {
-   TIM1->CCR2 =  rightpwm, HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET);
- } else {
-   TIM1->CCR2 = -rightpwm, HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET);
- }
-	  */
+
 }
 void navigated_running()
 {		
@@ -263,10 +259,34 @@ void navigated_running()
 	
 }
 
+void Circle_Handler()
+{
 
+		if (photo_val[5]==1&&photo_val[6]==1)
+		{
+		   Is_Straight_Flag=TASK_RUNNING;           //挂起直行标志位（允许偏一点）
+		}
+		if(Is_Straight_Flag == TASK_RUNNING && photo_val[0]==1)
+		{
+			if(Circle_OUT_Flag!=TASK_DONE)
+			{
+				Circle_CalculateAngle_Flag=  TASK_READY; //挂起检测到环岛入口的标志位
+			}	
+      else
+			{
+			  Circle_Destination_Flag=TASK_DONE;  //挂起检测到环岛出口的标志位
+				Circle_OUT_Flag=TASK_STOP;//清空标志位
+			}				
+	  }	
+		if(Circle_CalculateAngle_Flag == TASK_READY)
+		{
+			Calculate_measured_angle();  //检测到入口后，开始解算角度
+		}
+	
+}
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
-	if(htim==&htim2){		//TIM2是1ms中断，需要改成5ms中断么？（或者不改中断，在中断回调函数进行计数）  改成5ms为好，或者干到10ms应该也没啥事
+	if(htim==&htim2){		//TIM2是5ms中断
 		measured_leftwheelvio  = (int16_t)__HAL_TIM_GET_COUNTER(&htim4);
 		measured_rightwheelvio = -(int16_t)__HAL_TIM_GET_COUNTER(&htim3);
 		__HAL_TIM_SET_COUNTER(&htim4, 0);
@@ -279,8 +299,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 		     //measured_angle += photo_weight[i] * (photo_val[i]);
 				 //读取并计算光电管加权                      
 			}
-			//printf("\n");
-	  navigated_running();//小惯导处理直角
+		navigated_running();//小惯导处理直角
+	  Circle_Handler();//环岛的判断与处理
 		PIDcontrollor();
 		measured_angle=0;
 		memset(photo_val,0,sizeof(photo_val));//清零
@@ -585,7 +605,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 71;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 999;
+  htim2.Init.Period = 4999;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
