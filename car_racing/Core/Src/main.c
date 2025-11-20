@@ -144,8 +144,8 @@ float leftoutput;
 float leftpwm;
 float rightoutput;
 float rightpwm;
-
-taskstate Circle_CalculateAngle_Flag=TASK_STOP;//是否开始计算角度
+//标志位初始化
+taskstate Circle_CalculateAngle_Flag=TASK_STOP;//是否开始计算角度（是否进入被环岛岔路入口干扰最近点）
 taskstate Circle_OUT_Flag=TASK_STOP;//是否转完了360度刚出环岛
 taskstate Is_Straight_Flag=TASK_STOP;//车身方向是否大致是直的
 taskstate Circle_Destination_Flag=TASK_STOP;//车是否到达不被环岛干扰的最远点
@@ -218,7 +218,7 @@ void PIDcontrollor() // 第一种方案PID
     rotatevio_adding = PID_Calculate(&angular_velocity_pid_pid, target_Angularvelocity, measured_Angularvelocity);
     
     // 速度环
-    target_leftwheelvio =  target_translation_vio - rotatevio_adding;
+    target_leftwheelvio  =  target_translation_vio - rotatevio_adding;
     target_rightwheelvio = target_translation_vio + rotatevio_adding;
     
         // 左右轮分别控制
@@ -266,7 +266,7 @@ void Circle_Handler()
 		{
 		   Is_Straight_Flag=TASK_RUNNING;           //挂起直行标志位（允许偏一点）
 		}
-		if(Is_Straight_Flag == TASK_RUNNING && photo_val[0]==1)
+		if(Is_Straight_Flag == TASK_RUNNING && photo_val[0]==1 && photo_val[2]==0)
 		{
 			if(Circle_OUT_Flag!=TASK_DONE)
 			{
@@ -274,7 +274,7 @@ void Circle_Handler()
 			}	
       else
 			{
-			  Circle_Destination_Flag=TASK_DONE;  //挂起检测到环岛出口的标志位
+			    Circle_Destination_Flag=TASK_DONE;  //挂起检测到环岛出口的标志位
 				Circle_OUT_Flag=TASK_STOP;//清空标志位
 			}				
 	  }	
